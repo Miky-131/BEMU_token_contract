@@ -21,7 +21,10 @@ interface IUniswapV2Router {
         uint256 amountETHMin,
         address to,
         uint256 deadline
-    ) external payable returns (uint256 amountToken, uint256 amountETH, uint256 liquidity);
+    )
+        external
+        payable
+        returns (uint256 amountToken, uint256 amountETH, uint256 liquidity);
 }
 
 contract BEMU is ERC20, Ownable {
@@ -29,8 +32,9 @@ contract BEMU is ERC20, Ownable {
 
     // Tokenomics
     uint256 public constant TOTAL_SUPPLY = 3_140_000_000 * 10 ** 18;
-    uint256 public constant MAX_TRANSACTION_SIZE = TOTAL_SUPPLY * 2 / 100; // 2% of total supply
-    uint256 public constant ADDITIONAL_FEE_THRESHOLD = TOTAL_SUPPLY * 5 / 1000; // 0.5% of total supply
+    uint256 public constant MAX_TRANSACTION_SIZE = (TOTAL_SUPPLY * 2) / 100; // 2% of total supply
+    uint256 public constant ADDITIONAL_FEE_THRESHOLD =
+        (TOTAL_SUPPLY * 5) / 1000; // 0.5% of total supply
 
     // Fees
     struct FeeStructure {
@@ -39,8 +43,10 @@ contract BEMU is ERC20, Ownable {
         uint256 rewardFee;
     }
 
-    FeeStructure public buyFees = FeeStructure({liquidityFee: 4, marketingFee: 3, rewardFee: 3});
-    FeeStructure public sellFees = FeeStructure({liquidityFee: 5, marketingFee: 4, rewardFee: 4});
+    FeeStructure public buyFees =
+        FeeStructure({liquidityFee: 4, marketingFee: 3, rewardFee: 3});
+    FeeStructure public sellFees =
+        FeeStructure({liquidityFee: 5, marketingFee: 4, rewardFee: 4});
 
     uint256 public additionalFee = 2; // Additional fee for large transactions
 
@@ -56,9 +62,17 @@ contract BEMU is ERC20, Ownable {
 
     IUniswapV2Router public sushiSwapRouter;
 
-    event SwapAndLiquify(uint256 tokensSwapped, uint256 ethReceived, uint256 tokensAddedToLiquidity);
+    event SwapAndLiquify(
+        uint256 tokensSwapped,
+        uint256 ethReceived,
+        uint256 tokensAddedToLiquidity
+    );
 
-    constructor(address _marketingWallet, address _liquidityWallet, address _sushiSwapRouterAddress) ERC20("BEMU", "BEMU") {
+    constructor(
+        address _marketingWallet,
+        address _liquidityWallet,
+        address _sushiSwapRouterAddress
+    ) ERC20("BEMU", "BEMU") {
         _mint(msg.sender, TOTAL_SUPPLY);
         marketingWallet = _marketingWallet;
         liquidityWallet = _liquidityWallet;
@@ -70,6 +84,9 @@ contract BEMU is ERC20, Ownable {
         isExcludedFromRewards[address(this)] = true;
         isExcludedFromRewards[marketingWallet] = true;
         isExcludedFromRewards[liquidityWallet] = true;
+
+        // Approve the SushiSwap router for the entire token supply
+        _approve(address(this), address(sushiSwapRouter), type(uint256).max);
     }
 
     function _transfer(
@@ -77,7 +94,10 @@ contract BEMU is ERC20, Ownable {
         address recipient,
         uint256 amount
     ) internal override {
-        require(amount <= MAX_TRANSACTION_SIZE, "Exceeds maximum transaction size");
+        require(
+            amount <= MAX_TRANSACTION_SIZE,
+            "Exceeds maximum transaction size"
+        );
 
         uint256 fees = 0;
 
@@ -87,16 +107,47 @@ contract BEMU is ERC20, Ownable {
             }
 
             if (isSellTransaction(sender, recipient)) {
-                fees = fees.add(amount.mul(sellFees.liquidityFee.add(sellFees.marketingFee).add(sellFees.rewardFee)).div(100));
+                fees = fees.add(
+                    amount
+                        .mul(
+                            sellFees
+                                .liquidityFee
+                                .add(sellFees.marketingFee)
+                                .add(sellFees.rewardFee)
+                        )
+                        .div(100)
+                );
             } else {
-                fees = fees.add(amount.mul(buyFees.liquidityFee.add(buyFees.marketingFee).add(buyFees.rewardFee)).div(100));
+                fees = fees.add(
+                    amount
+                        .mul(
+                            buyFees.liquidityFee.add(buyFees.marketingFee).add(
+                                buyFees.rewardFee
+                            )
+                        )
+                        .div(100)
+                );
             }
         }
 
         if (fees > 0) {
-            uint256 liquidityPortion = fees.mul(isSellTransaction(sender, recipient) ? sellFees.liquidityFee : buyFees.liquidityFee).div(100);
-            uint256 marketingPortion = fees.mul(isSellTransaction(sender, recipient) ? sellFees.marketingFee : buyFees.marketingFee).div(100);
-            uint256 rewardsPortion = fees.sub(liquidityPortion).sub(marketingPortion);
+            uint256 liquidityPortion = fees
+                .mul(
+                    isSellTransaction(sender, recipient)
+                        ? sellFees.liquidityFee
+                        : buyFees.liquidityFee
+                )
+                .div(100);
+            uint256 marketingPortion = fees
+                .mul(
+                    isSellTransaction(sender, recipient)
+                        ? sellFees.marketingFee
+                        : buyFees.marketingFee
+                )
+                .div(100);
+            uint256 rewardsPortion = fees.sub(liquidityPortion).sub(
+                marketingPortion
+            );
 
             _swapAndLiquidify(liquidityPortion);
             _transferToMarketing(marketingPortion);
@@ -108,46 +159,42 @@ contract BEMU is ERC20, Ownable {
         super._transfer(sender, recipient, amount);
     }
 
-    function _swapAndLiquidify(uint256 tokenAmount) private {
-        // Split the tokenAmount into halves
-        uint256 half = tokenAmount.div(2);
-        uint256 otherHalf = tokenAmount.sub(half);
+function _swapAndLiquidify(uint256 tokenAmount) private {
+    // Split the tokenAmount into halves
+    uint256 half = tokenAmount.div(2);
+    uint256 otherHalf = tokenAmount.sub(half);
 
-        // Capture the initial ETH balance
-        uint256 initialBalance = address(this).balance;
+    // Capture the initial ETH balance
+    uint256 initialBalance = address(this).balance;
 
-        // Swap half of the tokens for ETH
-        address[] memory path = new address[](2);
-        path[0] = address(this);
-        path[1] = sushiSwapRouter.WETH();
+    // Swap half of the tokens for ETH
+    address;
+    path[0] = address(this);
+    path[1] = sushiSwapRouter.WETH();
 
-        _approve(address(this), address(sushiSwapRouter), half);
+    sushiSwapRouter.swapExactTokensForETH(
+        half,
+        0, // Accept any amount of ETH
+        path,
+        address(this),
+        block.timestamp
+    );
 
-        sushiSwapRouter.swapExactTokensForETH(
-            half,
-            0, // Accept any amount of ETH
-            path,
-            address(this),
-            block.timestamp
-        );
+    // Calculate the amount of ETH swapped
+    uint256 newBalance = address(this).balance.sub(initialBalance);
 
-        // Calculate the amount of ETH swapped
-        uint256 newBalance = address(this).balance.sub(initialBalance);
+    // Add liquidity to SushiSwap
+    sushiSwapRouter.addLiquidityETH{value: newBalance}(
+        address(this),
+        otherHalf,
+        0, // Slippage is ignored
+        0, // Slippage is ignored
+        liquidityWallet,
+        block.timestamp
+    );
 
-        // Add liquidity to SushiSwap
-        _approve(address(this), address(sushiSwapRouter), otherHalf);
-
-        sushiSwapRouter.addLiquidityETH{value: newBalance}(
-            address(this),
-            otherHalf,
-            0, // Slippage is ignored
-            0, // Slippage is ignored
-            liquidityWallet,
-            block.timestamp
-        );
-
-        emit SwapAndLiquify(half, newBalance, otherHalf);
-    }
+    emit SwapAndLiquify(half, newBalance, otherHalf);
+}
 
     function _transferToMarketing(uint256 amount) private {
         super._transfer(msg.sender, marketingWallet, amount);
@@ -160,21 +207,32 @@ contract BEMU is ERC20, Ownable {
             address account = address(this);
             if (!isExcludedFromRewards[account]) {
                 uint256 accountBalance = balanceOf(account);
-                uint256 reward = rewardAmount.mul(accountBalance).div(totalSupplyForRewards);
+                uint256 reward = rewardAmount.mul(accountBalance).div(
+                    totalSupplyForRewards
+                );
                 _transfer(address(this), account, reward);
             }
         }
     }
 
-    function isSellTransaction(address sender, address recipient) private view returns (bool) {
+    function isSellTransaction(
+        address sender,
+        address recipient
+    ) private view returns (bool) {
         return recipient == liquidityWallet;
     }
 
-    function excludeFromFees(address account, bool excluded) external onlyOwner {
+    function excludeFromFees(
+        address account,
+        bool excluded
+    ) external onlyOwner {
         isExcludedFromFees[account] = excluded;
     }
 
-    function excludeFromRewards(address account, bool excluded) external onlyOwner {
+    function excludeFromRewards(
+        address account,
+        bool excluded
+    ) external onlyOwner {
         isExcludedFromRewards[account] = excluded;
         if (excluded) {
             _totalExcluded = _totalExcluded.add(balanceOf(account));
