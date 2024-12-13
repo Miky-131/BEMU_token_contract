@@ -704,10 +704,6 @@ contract BEMU is Context, IERC20, Ownable {
     uint256 public _liquidityFee;
     uint256 public _marketingFee;
 
-    uint256 public _previousTaxFee;
-    uint256 public _previousLiquidityFee;
-    uint256 public _previousMarketingFee;
-
     uint256 public _buyTaxFee = 3;
     uint256 public _buyMarketingFee = 3;  
     uint256 public _buyLiquidityFee = 4;
@@ -995,24 +991,6 @@ contract BEMU is Context, IERC20, Ownable {
         );
     }
     
-    function removeAllFee() private {
-        if(_taxFee == 0 && _liquidityFee == 0 && _marketingFee == 0) return;
-        
-        _previousTaxFee = _taxFee;
-        _previousLiquidityFee = _liquidityFee;
-        _previousMarketingFee = _marketingFee;
-        
-        _taxFee = 0;
-        _liquidityFee = 0;
-        _marketingFee = 0;
-    }
-    
-    function restoreAllFee() private {
-        _taxFee = _previousTaxFee;
-        _liquidityFee = _previousLiquidityFee;
-        _marketingFee = _previousMarketingFee;
-    }
-    
     function isExcludedFromFee(address account) public view returns(bool) {
         return _isExcludedFromFee[account];
     }
@@ -1056,17 +1034,23 @@ contract BEMU is Context, IERC20, Ownable {
             //add liquidity
             swapAndLiquify(contractTokenBalance);
         }
-        
-        //indicates if fee should be deducted from transfer
-        bool takeFee = true;
-        
-        //if any account belongs to _isExcludedFromFee account then remove the fee
-        if(_isExcludedFromFee[from] || _isExcludedFromFee[to] || (from != uniswapV2Pair && to != uniswapV2Pair)){
-            takeFee = false;
+
+        if (from == uniswapV2Pair && !_isExcludedFromFee[to]) {
+            _taxFee = _buyTaxFee;
+            _liquidityFee = _buyLiquidityFee;
+            _marketingFee = _buyMarketingFee;
+        } else if (to == uniswapV2Pair && !_isExcludedFromFee[from]) {
+            _taxFee = _sellTaxFee;
+            _liquidityFee = _sellLiquidityFee;
+            _marketingFee = _sellMarketingFee;
+        } else {
+            _taxFee = 0;
+            _liquidityFee = 0;
+            _marketingFee = 0;
         }
-    
+  
         //transfer amount, it will take tax, burn, liquidity fee
-        _tokenTransfer(from,to,amount,takeFee);
+        _tokenTransfer(from,to,amount);
     }
 
     function swapAndLiquify(uint256 contractTokenBalance) private lockTheSwap {
@@ -1126,10 +1110,7 @@ contract BEMU is Context, IERC20, Ownable {
     }
 
     //this method is responsible for taking all fee, if takeFee is true
-    function _tokenTransfer(address sender, address recipient, uint256 amount,bool takeFee) private {
-        if(!takeFee)
-            removeAllFee();
-        
+    function _tokenTransfer(address sender, address recipient, uint256 amount) private {
         if (_isExcluded[sender] && !_isExcluded[recipient]) {
             _transferFromExcluded(sender, recipient, amount);
         } else if (!_isExcluded[sender] && _isExcluded[recipient]) {
@@ -1141,9 +1122,6 @@ contract BEMU is Context, IERC20, Ownable {
         } else {
             _transferStandard(sender, recipient, amount);
         }
-        
-        if(!takeFee)
-            restoreAllFee();
     }
 
     function _transferStandard(address sender, address recipient, uint256 tAmount) private {
