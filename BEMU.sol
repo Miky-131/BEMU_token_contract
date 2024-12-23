@@ -961,16 +961,24 @@ contract BEMU is Context, IERC20, Ownable {
         uint256 currentRate =  _getRate();
         uint256 rLiquidity = tLiquidity.mul(currentRate);
         _rOwned[address(this)] = _rOwned[address(this)].add(rLiquidity);
-        if(_isExcluded[address(this)])
+        if(_isExcluded[address(this)]) {
             _tOwned[address(this)] = _tOwned[address(this)].add(tLiquidity);
+            emit Transfer(msg.sender, address(this), tLiquidity);
+        }
+
+        emit Transfer(msg.sender, address(this), tLiquidity);
     }
 
     function _takeMarketing(uint256 tMarketing) private {
         uint256 currentRate =  _getRate();
         uint256 rMarketing = tMarketing.mul(currentRate);
         _rOwned[_marketingWallet] = _rOwned[_marketingWallet].add(rMarketing);
-        if(_isExcluded[_marketingWallet])
-            _tOwned[_marketingWallet] = _tOwned[_marketingWallet].add(rMarketing);
+        if(_isExcluded[_marketingWallet]) {
+            _tOwned[_marketingWallet] = _tOwned[_marketingWallet].add(tMarketing);
+            emit Transfer(msg.sender, _marketingWallet, tMarketing);
+        }
+
+        emit Transfer(msg.sender, _marketingWallet, tMarketing);
     }
     
     function calculateTaxFee(uint256 _amount) private view returns (uint256) {
@@ -988,6 +996,26 @@ contract BEMU is Context, IERC20, Ownable {
     function calculateMarketingFee(uint256 _amount) private view returns (uint256) {
         return _amount.mul(_marketingFee).div(
             10**2
+        );
+    }
+
+    function removeAllFee() private {
+        if(_taxFee == 0 && _liquidityFee == 0 &&_marketingFee == 0) return;
+        
+        _taxFee = 0;
+        _liquidityFee = 0;
+        _marketingFee = 0;
+    }
+    
+    function restoreAllFee(bool isBuy) private {
+        isBuy ? (
+            _taxFee = _buyTaxFee,
+            _liquidityFee = _buyLiquidityFee,
+            _marketingFee = _buyMarketingFee
+        ) : (
+            _taxFee = _sellTaxFee,
+            _liquidityFee = _sellLiquidityFee,
+            _marketingFee = _sellMarketingFee         
         );
     }
     
@@ -1035,22 +1063,21 @@ contract BEMU is Context, IERC20, Ownable {
             swapAndLiquify(contractTokenBalance);
         }
 
+        bool takeFee = false;
+        bool isBuy = true;
+
         if (from == uniswapV2Pair && !_isExcludedFromFee[to]) {
-            _taxFee = _buyTaxFee;
-            _liquidityFee = _buyLiquidityFee;
-            _marketingFee = _buyMarketingFee;
+            takeFee = true;
+            isBuy = true;
         } else if (to == uniswapV2Pair && !_isExcludedFromFee[from]) {
-            _taxFee = _sellTaxFee;
-            _liquidityFee = _sellLiquidityFee;
-            _marketingFee = _sellMarketingFee;
+            takeFee = true;
+            isBuy = false;
         } else {
-            _taxFee = 0;
-            _liquidityFee = 0;
-            _marketingFee = 0;
+            takeFee = false;
         }
   
         //transfer amount, it will take tax, burn, liquidity fee
-        _tokenTransfer(from,to,amount);
+        _tokenTransfer(from,to,amount,takeFee,isBuy);
     }
 
     function swapAndLiquify(uint256 contractTokenBalance) private lockTheSwap {
@@ -1110,7 +1137,9 @@ contract BEMU is Context, IERC20, Ownable {
     }
 
     //this method is responsible for taking all fee, if takeFee is true
-    function _tokenTransfer(address sender, address recipient, uint256 amount) private {
+    function _tokenTransfer(address sender, address recipient, uint256 amount, bool takeFee, bool isBuy) private {
+        takeFee? restoreAllFee(isBuy) : removeAllFee();
+
         if (_isExcluded[sender] && !_isExcluded[recipient]) {
             _transferFromExcluded(sender, recipient, amount);
         } else if (!_isExcluded[sender] && _isExcluded[recipient]) {
@@ -1122,6 +1151,9 @@ contract BEMU is Context, IERC20, Ownable {
         } else {
             _transferStandard(sender, recipient, amount);
         }
+
+        if(!takeFee)
+            restoreAllFee(isBuy);
     }
 
     function _transferStandard(address sender, address recipient, uint256 tAmount) private {
