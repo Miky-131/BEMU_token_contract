@@ -440,7 +440,7 @@ contract BemuToken is ERC20, Ownable {
             super._transfer(sender, address(this), totalFee - marketingFee);
         }
 
-        if (!inSwapAndLiquify && liquidityPool >= liquidityThreshold) {
+        if (!inSwapAndLiquify && liquidityPool >= liquidityThreshold && !isPair[sender]) {
             provideLiquidity();
         }
         if (buybackPool >= buybackThreshold){
@@ -467,9 +467,10 @@ contract BemuToken is ERC20, Ownable {
         liquidityPool = 0; // Reset pool
     }
 
-    function performBuybackAndBurn() private onlyOwner {
+    function performBuybackAndBurn() private {
         if (liquidityPool == 0) {
             super._burn(address(this), balanceOf(address(this)));
+            buybackPool = 0;
         } else {
             super._burn(address(this), buybackPool); // Burn tokens
             buybackPool = 0; // Reset pool
@@ -505,7 +506,7 @@ contract BemuToken is ERC20, Ownable {
         );
     }
 
-    function excludeFromFees(address account, bool excluded) public  onlyOwner {
+    function excludeFromFees(address account, bool excluded) public onlyOwner {
         isExcludedFromFees[account] = excluded;
     }
 
