@@ -95,7 +95,10 @@ contract ERC20 {
 
     function _burn(address account, uint256 amount) internal {
         require(account != address(0), "ERC20: burn from the zero address");
-        require(_balances[account] >= amount, "ERC20: burn amount exceeds balance");
+        require(
+            _balances[account] >= amount,
+            "ERC20: burn amount exceeds balance"
+        );
 
         _balances[account] -= amount;
         totalSupply -= amount;
@@ -347,9 +350,11 @@ contract BemuToken is ERC20, Ownable {
     uint256 private BUY_LIQUIDITY_FEE = 4; // 4%
     uint256 private BUY_MARKETING_FEE = 1; // 1%
     uint256 private BUY_BUYBACK_FEE = 1; // 1%
+    uint256 constant MAX_BUY_FEE_TOTAL = 10; //the total buy fee is 10% maximum
     uint256 private SELL_LIQUIDITY_FEE = 6; // 6%
     uint256 private SELL_MARKETING_FEE = 4; // 4%
     uint256 private SELL_BUYBACK_FEE = 2; // 2%
+    uint256 constant MAX_SELL_FEE_TOTAL = 15; //the total buy fee is 10% maximum
 
     event SetFees(
         uint256 BUY_LIQUIDITY_FEE,
@@ -359,18 +364,17 @@ contract BemuToken is ERC20, Ownable {
         uint256 SELL_MARKETING_FEE,
         uint256 SELL_BUYBACK_FEE
     );
-    event UpdateThresholds(
-        uint256 buybackThreshold,
-        uint256 liquidityThreshold
-    );
+    event UpdateThresholds(uint256 buybackThreshold, uint256 liquidityThreshold);
+    event MaxTransactionAmountUpdated(uint256 maxTransactionAmount);
+    event MaxWalletHoldingUpdated(uint256 maxWalletHolding);
 
     address public marketingWallet;
 
     mapping(address => bool) public isExcludedFromFees;
     mapping(address => bool) public isPair;
 
-    uint256 public buybackThreshold = 6000 * 10**18; // Threshold to perform buyback
-    uint256 public liquidityThreshold = 30000 * 10**18; // Threshold to provide liquidity
+    uint256 public buybackThreshold = 200000000 * 10**18; // Threshold to perform buyback
+    uint256 public liquidityThreshold = 100000000 * 10**18; // Threshold to provide liquidity
 
     bool private inSwapAndLiquify;
 
@@ -380,17 +384,19 @@ contract BemuToken is ERC20, Ownable {
         inSwapAndLiquify = false;
     }
 
-    uint256 public buybackPool = 0;
-    uint256 public liquidityPool = 0;
+    uint256 public buybackPool;
+    uint256 public liquidityPool;
 
-    IUniswapV2Router02 public uniswapRouter; //0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24
+    // Anti-whale variables
+    uint256 public maxTransactionAmount;
+    uint256 public maxWalletHolding;
 
-    constructor(
-        address _marketingWallet,
-        address _uniswapRouter
-    ) ERC20("BEMU", "BEMU") {
+    IUniswapV2Router02 public uniswapRouter;
+
+    constructor(address _marketingWallet)
+        ERC20("BEMU", "BEMU")
+    {
         marketingWallet = _marketingWallet;
-        uniswapRouter = IUniswapV2Router02(_uniswapRouter);
         _mint(msg.sender, 3_140_000_000 * 10**decimals); // Mint 3.14B tokens
 
         excludeFromFees(msg.sender, true);
@@ -402,6 +408,8 @@ contract BemuToken is ERC20, Ownable {
         address recipient,
         uint256 amount
     ) internal override {
+        require(amount <= maxTransactionAmount, "Transfer amount exceeds the max transaction limit");
+        require(balanceOf(recipient) + amount <= maxWalletHolding, "Recipient wallet exceeds the max holding limit");
         if (isExcludedFromFees[sender] || isExcludedFromFees[recipient]) {
             super._transfer(sender, recipient, amount);
             return;
@@ -440,10 +448,14 @@ contract BemuToken is ERC20, Ownable {
             super._transfer(sender, address(this), totalFee - marketingFee);
         }
 
-        if (!inSwapAndLiquify && liquidityPool >= liquidityThreshold && !isPair[sender]) {
+        if (
+            !inSwapAndLiquify &&
+            liquidityPool >= liquidityThreshold &&
+            !isPair[sender]
+        ) {
             provideLiquidity();
         }
-        if (buybackPool >= buybackThreshold){
+        if (buybackPool >= buybackThreshold) {
             performBuybackAndBurn();
         }
         // Transfer the remaining tokens to the recipient
@@ -511,25 +523,60 @@ contract BemuToken is ERC20, Ownable {
     }
 
     function setFees(
-        uint256 _BUY_LIQUIDITY_FEE, uint256 _BUY_MARKETING_FEE, uint256 _BUY_BUYBACK_FEE, 
-        uint256 _SELL_LIQUIDITY_FEE, uint256 _SELL_MARKETING_FEE, uint256 _SELL_BUYBACK_FEE
+        uint256 _BUY_LIQUIDITY_FEE,
+        uint256 _BUY_MARKETING_FEE,
+        uint256 _BUY_BUYBACK_FEE,
+        uint256 _SELL_LIQUIDITY_FEE,
+        uint256 _SELL_MARKETING_FEE,
+        uint256 _SELL_BUYBACK_FEE
     ) external onlyOwner {
-        BUY_LIQUIDITY_FEE = _BUY_LIQUIDITY_FEE; BUY_MARKETING_FEE = _BUY_MARKETING_FEE; BUY_BUYBACK_FEE = _BUY_BUYBACK_FEE;
-        SELL_LIQUIDITY_FEE = _SELL_LIQUIDITY_FEE; SELL_MARKETING_FEE = _SELL_MARKETING_FEE; SELL_BUYBACK_FEE = _SELL_BUYBACK_FEE;
+        require(
+            _BUY_LIQUIDITY_FEE + _BUY_MARKETING_FEE + _BUY_BUYBACK_FEE <= MAX_BUY_FEE_TOTAL,
+            "Buy total fees exceed the maximum limit of 15%"
+        );
+        require(
+            _SELL_LIQUIDITY_FEE + _SELL_MARKETING_FEE + _SELL_BUYBACK_FEE <= MAX_SELL_FEE_TOTAL,
+            "Sell total fees exceed the maximum limit of 15%"
+        );
+        BUY_LIQUIDITY_FEE = _BUY_LIQUIDITY_FEE;
+        BUY_MARKETING_FEE = _BUY_MARKETING_FEE;
+        BUY_BUYBACK_FEE = _BUY_BUYBACK_FEE;
+        SELL_LIQUIDITY_FEE = _SELL_LIQUIDITY_FEE;
+        SELL_MARKETING_FEE = _SELL_MARKETING_FEE;
+        SELL_BUYBACK_FEE = _SELL_BUYBACK_FEE;
 
         //Emit the FeesUpdated event
-        emit SetFees(_BUY_LIQUIDITY_FEE, _BUY_MARKETING_FEE, _BUY_BUYBACK_FEE, _SELL_LIQUIDITY_FEE, _SELL_MARKETING_FEE, _SELL_BUYBACK_FEE);
+        emit SetFees(
+            _BUY_LIQUIDITY_FEE,
+            _BUY_MARKETING_FEE,
+            _BUY_BUYBACK_FEE,
+            _SELL_LIQUIDITY_FEE,
+            _SELL_MARKETING_FEE,
+            _SELL_BUYBACK_FEE
+        );
     }
 
-    function getFees() external view
-        returns (uint256 buyLiquidityFee, uint256 buyMarketingFee, uint256 buyBuybackFee,
-            uint256 sellLiquidityFee, uint256 sellMarketingFee, uint256 sellBuybackFee
+    function getFees() external view returns (
+            uint256 buyLiquidityFee,
+            uint256 buyMarketingFee,
+            uint256 buyBuybackFee,
+            uint256 sellLiquidityFee,
+            uint256 sellMarketingFee,
+            uint256 sellBuybackFee
         )
     {
         return (
-            BUY_LIQUIDITY_FEE, BUY_MARKETING_FEE, BUY_BUYBACK_FEE,
-            SELL_LIQUIDITY_FEE, SELL_MARKETING_FEE, SELL_BUYBACK_FEE
+            BUY_LIQUIDITY_FEE,
+            BUY_MARKETING_FEE,
+            BUY_BUYBACK_FEE,
+            SELL_LIQUIDITY_FEE,
+            SELL_MARKETING_FEE,
+            SELL_BUYBACK_FEE
         );
+    }
+
+    function setUniswapRouter(address _uniswapRouter) external onlyOwner {
+        uniswapRouter = IUniswapV2Router02(_uniswapRouter);
     }
 
     function setPair(address pair, bool value) external onlyOwner {
@@ -544,6 +591,18 @@ contract BemuToken is ERC20, Ownable {
         liquidityThreshold = _liquidityThreshold;
 
         emit UpdateThresholds(_buybackThreshold, _liquidityThreshold);
+    }
+
+    function updateMaxTransactionAmount(uint256 percentage) external onlyOwner {
+        require(percentage <= 100, "Percentage must be under 100"); // Ensure the percentage is reasonable (1% to 100%)
+        maxTransactionAmount = (totalSupply * percentage) / 100;
+        emit MaxTransactionAmountUpdated(maxTransactionAmount);
+    }
+
+    function updateMaxWalletHolding(uint256 percentage) external onlyOwner {
+        require(percentage <= 100, "Percentage must be under 100"); // Ensure the percentage is reasonable (1% to 100%)
+        maxWalletHolding = (totalSupply * percentage) / 100;
+        emit MaxWalletHoldingUpdated(maxWalletHolding);
     }
 
     receive() external payable {}
